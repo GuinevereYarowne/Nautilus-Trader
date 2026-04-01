@@ -1,0 +1,103 @@
+[package]
+name = "nautilus-betfair"
+readme = "README.md"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Betfair exchange integration adapter for the Nautilus trading engine"
+categories.workspace = true
+keywords.workspace = true
+documentation.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false # Do not publish to crates.io yet
+
+[lints]
+workspace = true
+
+[lib]
+name = "nautilus_betfair"
+crate-type = ["rlib"]
+
+[features]
+high-precision = ["nautilus-model/high-precision"]
+python = [
+  "nautilus-core/python",
+  "nautilus-model/python",
+  "nautilus-system/python",
+  "pyo3",
+  "pyo3-stub-gen",
+]
+
+[package.metadata.docs.rs]
+features = ["high-precision"]
+rustdoc-args = ["--cfg", "docsrs"]
+
+[dependencies]
+nautilus-common = { workspace = true, features = ["live"] }
+nautilus-core = { workspace = true }
+nautilus-live = { workspace = true }
+nautilus-model = { workspace = true }
+nautilus-network = { workspace = true }
+nautilus-persistence-macros = { workspace = true }
+nautilus-serialization = { workspace = true, features = ["arrow"] }
+nautilus-system = { workspace = true }
+
+ahash = { workspace = true }
+anyhow = { workspace = true }
+arrow = { workspace = true }
+async-trait = { workspace = true }
+bon = { workspace = true }
+bytes = { workspace = true }
+bzip2 = { workspace = true }
+chrono = { workspace = true }
+flate2 = { workspace = true }
+log = { workspace = true }
+rust_decimal = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+strum = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-util = { workspace = true }
+urlencoding = { workspace = true }
+ustr = { workspace = true }
+zeroize = { workspace = true }
+
+pyo3 = { workspace = true, optional = true }
+pyo3-stub-gen = { workspace = true, optional = true }
+
+[dev-dependencies]
+nautilus-backtest = { workspace = true }
+nautilus-execution = { workspace = true }
+nautilus-testkit = { workspace = true }
+nautilus-trading = { workspace = true, features = ["examples"] }
+
+axum = { workspace = true }
+dotenvy = { workspace = true }
+rstest = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+
+[[example]]
+name = "betfair-data-tester"
+path = "examples/node_data_tester.rs"
+doc = false
+
+[[example]]
+name = "betfair-exec-tester"
+path = "examples/node_exec_tester.rs"
+doc = false
+
+[[example]]
+name = "betfair-load-file"
+path = "examples/load_betfair_file.rs"
+doc = false
+
+# Run with `cargo run -p nautilus-betfair --example betfair-backtest`
+[[example]]
+name = "betfair-backtest"
+path = "examples/betfair_backtest.rs"
+doc = false

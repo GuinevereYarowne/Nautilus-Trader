@@ -1,0 +1,344 @@
+name: build-v2
+
+# Build & publish wheels for the *v2* Python package living under the
+# `python/` directory. These wheels are uploaded to the dedicated
+# v2 package index at:
+#   https://packages.nautechsystems.io/v2/simple/nautilus-trader/
+
+permissions:
+  contents: read
+  actions: read
+
+on:
+  push:
+    branches:
+      - test-ci
+      - test-ci-v2
+      - develop
+      - nightly
+
+env:
+  PACKAGE_DIR: python
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      run-tests: ${{ steps.plan.outputs.run_tests }}
+      run-rust-tests: ${{ steps.plan.outputs.run_rust_tests }}
+    steps:
+      # https://github.com/step-security/harden-runner
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: ${{ vars.STEP_SECURITY_EGRESS_POLICY || 'block' }}
+          allowed-endpoints: >-
+            ${{ vars.COMMON_ALLOWED_ENDPOINTS }}
+            ${{ vars.CI_ALLOWED_ENDPOINTS }}
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Plan
+        id: plan
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: bash scripts/ci/plan.sh
+
+  pre-commit:
+    runs-on: depot-ubuntu-22.04-8
+    steps:
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: ${{ vars.STEP_SECURITY_EGRESS_POLICY || 'block' }}
+          allowed-endpoints: >-
+            ${{ vars.COMMON_ALLOWED_ENDPOINTS }}
+            ${{ vars.CI_ALLOWED_ENDPOINTS }}
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Temporary: fail fast on rare runner worktree corruption while we isolate the root cause
+      - name: Verify immutable CI inputs (post-checkout)
+        run: bash scripts/ci/verify-ci-inputs.sh post-checkout
+
+      - name: Common setup
+        uses: ./.github/actions/common-setup
+        with:
+          python-version: "3.13"
+          free-disk-space: "true"
+          build-type: "pre-commit"
+
+      - name: Run pre-commit
+        run: pre-commit run --all-files
+
+  rust-tests:
+    if: needs.plan.outputs.run-rust-tests == 'true'
+    needs:
+      - plan
+      - pre-commit
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+    # Push events (develop/nightly) use 8-core runners for faster builds
+    runs-on: depot-ubuntu-22.04-8
+    defaults:
+      run:
+        shell: bash
+    name: rust-tests (ubuntu-22.04, ${{ matrix.python-version }})
+    env:
+      BUILD_MODE: release
+      RUST_BACKTRACE: 1
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-v2/py${{ matrix.python-version }}
+    # yamllint disable rule:line-length
+    services:
+      redis:
+        image: public.ecr.aws/docker/library/redis:7.4.5-alpine3.21@sha256:bb186d083732f669da90be8b0f975a37812b15e913465bb14d845db72a4e3e08
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      postgres:
+        image: public.ecr.aws/docker/library/postgres:16.4-alpine@sha256:5660c2cbfea50c7a9127d17dc4e48543eedd3d7a41a595a2dfa572471e37e64c
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DB: nautilus
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d nautilus"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    # yamllint enable rule:line-length
+
+    steps:
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: ${{ vars.STEP_SECURITY_EGRESS_POLICY || 'block' }}
+          allowed-endpoints: >-
+            ${{ vars.COMMON_ALLOWED_ENDPOINTS }}
+            ${{ vars.CI_ALLOWED_ENDPOINTS }}
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Temporary: fail fast on rare runner worktree corruption while we isolate the root cause
+      - name: Verify immutable CI inputs (post-checkout)
+        run: bash scripts/ci/verify-ci-inputs.sh post-checkout
+
+      - name: Common setup
+        uses: ./.github/actions/common-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          free-disk-space: "true"
+          rust-cache-key: build-v2-${{ matrix.python-version }}
+          rust-cache-workspaces: . -> target-v2/py${{ matrix.python-version }}
+          rust-cache-on-failure: "false"
+
+      - name: Install Nautilus CLI
+        env:
+          NAUTILUS_CLI_FORCE_SOURCE: ${{ github.ref == 'refs/heads/nightly' && '1' || '0' }}
+        run: bash scripts/ci/install-nautilus-cli.sh
+
+      - name: Init postgres schema
+        run: nautilus database init --schema ${{ github.workspace }}/schema/sql
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_USERNAME: postgres
+          POSTGRES_PASSWORD: pass
+          POSTGRES_DATABASE: nautilus
+
+      - name: Cached test data
+        uses: ./.github/actions/common-test-data
+
+      - name: Run Rust tests (core)
+        run: make cargo-test-core HYPERSYNC=true NEXTEST_PROFILE=ci
+
+      - name: Run Rust tests (adapters)
+        run: make cargo-test-adapters HYPERSYNC=true NEXTEST_PROFILE=ci
+
+  build:
+    if: >
+      always() &&
+      needs.plan.outputs.run-tests == 'true' &&
+      needs.pre-commit.result == 'success' &&
+      (needs.rust-tests.result == 'success' || needs.rust-tests.result == 'skipped')
+    needs:
+      - plan
+      - pre-commit
+      - rust-tests
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+    # Push events (develop/nightly) use 8-core runners for faster builds
+    runs-on: depot-ubuntu-22.04-8
+    defaults:
+      run:
+        shell: bash
+    env:
+      BUILD_MODE: release
+      RUST_BACKTRACE: 1
+      # Keep v2 Cargo artifacts separate from the legacy build and per-Python ABI.
+      CARGO_TARGET_DIR: ${{ github.workspace }}/target-v2/py${{ matrix.python-version }}
+    steps:
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: ${{ vars.STEP_SECURITY_EGRESS_POLICY || 'block' }}
+          allowed-endpoints: >-
+            ${{ vars.COMMON_ALLOWED_ENDPOINTS }}
+            ${{ vars.CI_ALLOWED_ENDPOINTS }}
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      # Temporary: fail fast on rare runner worktree corruption while we isolate the root cause
+      - name: Verify immutable CI inputs (post-checkout)
+        run: bash scripts/ci/verify-ci-inputs.sh post-checkout
+
+      - name: Common setup
+        uses: ./.github/actions/common-setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          free-disk-space: "true"
+          rust-cache-key: build-v2-${{ matrix.python-version }}
+          rust-cache-workspaces: . -> target-v2/py${{ matrix.python-version }}
+          rust-cache-on-failure: "false"
+
+      # Update version for dev/nightly branches
+      - name: Update version in pyproject.toml
+        if: ${{ github.ref != 'refs/heads/master' }}
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          bash ../scripts/ci/update-pyproject-version.sh
+
+      # Temporary: fail fast on rare runner worktree corruption while we isolate the root cause
+      - name: Verify immutable CI inputs (pre-wheel build)
+        run: bash scripts/ci/verify-ci-inputs.sh pre-wheel-build
+
+      # Build the wheel for v2 under python/ using maturin
+      - name: Build wheel (v2)
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          pip install --upgrade maturin
+          maturin build --release --out ../dist
+
+      - name: Run v2 Python tests
+        working-directory: ${{ env.PACKAGE_DIR }}
+        run: |
+          uv sync --group test --no-install-package nautilus-trader
+          uv pip install "../dist/"*.whl
+          cd /tmp && uv run --project "$GITHUB_WORKSPACE/${{ env.PACKAGE_DIR }}" --no-sync pytest \
+            --import-mode=importlib \
+            --rootdir="$GITHUB_WORKSPACE/${{ env.PACKAGE_DIR }}" \
+            "$GITHUB_WORKSPACE/${{ env.PACKAGE_DIR }}/tests/" -v
+
+      # Temporary: show whether v2 stub or docstring generation dirtied tracked files while we isolate CI drift
+      - name: Report generated v2 file drift
+        if: always()
+        run: |
+          targets=(
+            python/generate_docstrings.py
+            python/generate_stubs.py
+            crates/pyo3
+            ':(glob)python/nautilus_trader/**/*.pyi'
+            ':(glob)crates/**/src/python/**/*.rs'
+          )
+
+          changes="$(git status --short --untracked-files=all -- "${targets[@]}")"
+
+          if [ -z "$changes" ]; then
+            echo "No generated v2 file drift detected"
+            exit 0
+          fi
+
+          echo "::warning::Tracked or untracked v2 build files changed during the job"
+          printf '%s\n' "$changes"
+          echo
+          git diff --stat HEAD -- "${targets[@]}" || true
+
+      - name: Upload wheel artifact
+        uses: ./.github/actions/upload-artifact-wheel
+
+  publish:
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    # Only publish from mainline branches, never from test branches
+    if: >
+      github.ref_name == 'develop' ||
+      github.ref_name == 'nightly' ||
+      github.ref_name == 'master'
+    environment: r2-${{ github.ref_name }}
+    permissions:
+      actions: write # Required for deleting artifacts
+      contents: read
+      id-token: write # Required for attestations
+      attestations: write # Required for attestations
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      CLOUDFLARE_R2_URL: ${{ secrets.CLOUDFLARE_R2_URL }}
+      CLOUDFLARE_R2_REGION: "auto"
+      CLOUDFLARE_R2_BUCKET_NAME: "packages"
+      CLOUDFLARE_R2_PREFIX: "v2/simple/nautilus-trader"
+    steps:
+      - uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: ${{ vars.STEP_SECURITY_EGRESS_POLICY || 'block' }}
+          allowed-endpoints: >-
+            ${{ vars.COMMON_ALLOWED_ENDPOINTS }}
+            ${{ vars.CI_ALLOWED_ENDPOINTS }}
+            ${{ secrets.CLOUDFLARE_R2_ALLOWED_HOST }}:443
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Download built wheels
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          path: dist
+          pattern: "*.whl"
+          merge-multiple: true
+
+      # https://github.com/actions/attest-build-provenance
+      - name: Attest wheel provenance
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: 'dist/*.whl'
+
+      - name: Publish wheels to Cloudflare R2 (v2 bucket)
+        uses: ./.github/actions/publish-wheels
+
+      - name: Fetch and delete artifacts for current run
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          bash ./scripts/ci/publish-wheels-delete-artifacts.sh
