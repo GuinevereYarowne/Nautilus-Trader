@@ -623,7 +623,7 @@ class BinanceFuturesAlgoOrderHttp(BinanceHttpEndpoint):
             Price protection. Default is false.
         reduceOnly : str, optional
             Reduce only flag. Cannot be used in Hedge Mode.
-        activationPrice : str, optional
+        activatePrice : str, optional
             Activation price for TRAILING_STOP_MARKET orders.
         callbackRate : str, optional
             Callback rate for TRAILING_STOP_MARKET (0.1-10, where 1 = 1%).
@@ -651,7 +651,7 @@ class BinanceFuturesAlgoOrderHttp(BinanceHttpEndpoint):
         closePosition: str | None = None
         priceProtect: str | None = None
         reduceOnly: str | None = None
-        activationPrice: str | None = None
+        activatePrice: str | None = None
         callbackRate: str | None = None
         clientAlgoId: str | None = None
         goodTillDate: int | None = None
@@ -1142,7 +1142,7 @@ class BinanceFuturesAccountHttpAPI(BinanceAccountHttpAPI):
                 closePosition=close_position,
                 priceProtect=price_protect,
                 reduceOnly=reduce_only,
-                activationPrice=activation_price,
+                activatePrice=activation_price,
                 callbackRate=callback_rate,
                 clientAlgoId=client_algo_id,
                 goodTillDate=good_till_date,

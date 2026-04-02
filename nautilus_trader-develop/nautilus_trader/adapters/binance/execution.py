@@ -957,7 +957,6 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
                 return f"INVALID_TRAILING_OFFSET_TYPE: {trailing_offset_type_to_str(order.trailing_offset_type)}"
 
             callback_rate = Decimal(order.trailing_offset) / Decimal(100)
-            callback_rate = callback_rate.quantize(Decimal("0.1"))
 
             if (
                 callback_rate < BINANCE_MIN_CALLBACK_RATE
@@ -1194,10 +1193,8 @@ class BinanceCommonExecutionClient(LiveExecutionClient):
         time_in_force = self._determine_time_in_force(order)
 
         # Convert basis points to percentage, preserving precision
-        # Binance supports up to 1 decimal place precision for callback rates
+        # Binance API accepts full decimal precision for callback rates
         callback_rate = Decimal(order.trailing_offset) / Decimal(100)
-        # Round to 1 decimal place only if necessary to meet Binance requirements
-        callback_rate = callback_rate.quantize(Decimal("0.1"))
 
         activation_price: Price | None = order.activation_price
 
