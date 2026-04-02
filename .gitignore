@@ -1,0 +1,30 @@
+# 依赖目录
+node_modules/
+vendor/
+.pnp/
+.pnp.js
+
+# 构建产物
+dist/
+build/
+out/
+output/
+
+# 日志
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+
+# 编辑器配置
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# Git 本身
+.git/
